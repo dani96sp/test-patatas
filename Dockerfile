@@ -1,58 +1,52 @@
 # 1. IMAGEN BASE
-# Usamos la imagen oficial de PHP con Alpine Linux (ligera) y FPM (FastCGI)
 FROM php:8.2-fpm-alpine
 
 # 2. INSTALAR DEPENDENCIAS DEL SISTEMA
-# Instalamos Git, extensiones de PHP, Composer y herramientas de Postgres
+# build-base es virtual (.build-deps) para poder borrarlo después y mantener la imagen ligera
 RUN apk update && apk add --no-cache \
     git \
-    build-base \
-    # Herramientas para Composer y depuración
     curl \
-    # Dependencias de PostgreSQL para PDO
-    postgresql-dev \
-    # Necesario para el servidor web (Nginx o Apache)
     nginx \
-    # Limpiar
+    libpq \
+    && apk add --no-cache --virtual .build-deps \
+    build-base \
+    postgresql-dev \
+    # 3. INSTALAR EXTENSIONES DE PHP
+    && docker-php-ext-install pdo pdo_pgsql opcache exif \
+    # Limpiar dependencias de compilación
+    && apk del .build-deps \
     && rm -rf /var/cache/apk/*
 
-# 3. INSTALAR EXTENSIONES DE PHP
-# Instalamos las extensiones PHP clave, incluyendo pdo_pgsql para PostgreSQL
-RUN docker-php-ext-install pdo pdo_pgsql \
-    # Extensiones útiles comunes
-    opcache \
-    mysqli \
-    exif
+# Crear directorio PID para Nginx (Crucial en Alpine)
+RUN mkdir -p /run/nginx
 
 # 4. INSTALAR COMPOSER
-# Descargamos e instalamos Composer globalmente
 COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
 
-# 5. CONFIGURACIÓN DEL SERVIDOR WEB (Nginx)
-# Copiamos la configuración básica de Nginx para PHP-FPM
-COPY .docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+# 5. CONFIGURACIÓN DEL SERVIDOR WEB
+# Alpine usa http.d por defecto, asegúrate de que tu configuración sea compatible
+COPY .docker/nginx/default.conf /etc/nginx/http.d/default.conf
 
 # 6. CONFIGURACIÓN DEL PROYECTO
-# Definimos el directorio de trabajo (donde estará el código)
 WORKDIR /var/www/html
 
-# 7. COPIAR CÓDIGO Y DEPENDENCIAS
-# Copiamos el código de la aplicación
-COPY . /var/www/html
+# 7. OPTIMIZACIÓN DE CACHÉ (Primero dependencias, luego código)
+# Copiamos solo los archivos de definición de dependencias
+COPY composer.json composer.lock* ./
 
 # 8. INSTALAR DEPENDENCIAS DE PHP
-# Ejecutamos Composer para instalar las dependencias (si tienes un framework)
-# Si no tienes un composer.json complejo, puedes comentar esta línea por ahora
-RUN composer install --no-dev --optimize-autoloader
+# Ejecutamos install. Si no hay dependencias, esto será rápido.
+RUN composer install --no-dev --optimize-autoloader --no-scripts --no-interaction
 
-# 9. PERMISOS (Importante para evitar errores en producción/logs)
-# Aseguramos que el usuario www-data tenga permisos sobre el código
+# Ahora copiamos el resto del código
+COPY . .
+
+# 9. PERMISOS
 RUN chown -R www-data:www-data /var/www/html
 
-# 10. EXPONER PUERTOS (Nginx)
+# 10. EXPONER PUERTOS
 EXPOSE 80
 
-# 11. COMANDO DE INICIO
-
+# 11. COMANDO DE INICIO CORREGIDO
 # Usamos php-fpm -D para enviarlo al fondo (daemon) y luego iniciamos Nginx
 CMD sh -c "php-fpm -D && nginx -g 'daemon off;'"
