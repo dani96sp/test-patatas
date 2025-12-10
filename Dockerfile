@@ -53,5 +53,6 @@ RUN chown -R www-data:www-data /var/www/html
 EXPOSE 80
 
 # 11. COMANDO DE INICIO
-# Este comando inicia FPM y Nginx en paralelo.
-CMD sh -c "php-fpm && nginx -g 'daemon off;'"
+
+# Usamos php-fpm -D para enviarlo al fondo (daemon) y luego iniciamos Nginx
+CMD sh -c "php-fpm -D && nginx -g 'daemon off;'"
